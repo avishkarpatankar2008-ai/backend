@@ -50,12 +50,12 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://v0-campusorbit-rental-platform-fv1rccwn.vercel.app",
         "https://v0-campusorbit-rental-platform-omega.vercel.app"
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-)
 )
 
 # ── Routes ────────────────────────────────────────────────────
