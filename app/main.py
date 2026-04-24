@@ -49,15 +49,11 @@ app = FastAPI(
 # ── CORS ──────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://v0-campusorbit-rental-platform-fv1rccwn.vercel.app",
-        "https://v0-campusorbit-rental-platform-omega.vercel.app"
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],   # TEMP
+    allow_credentials=False,  # IMPORTANT
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 # ── Routes ────────────────────────────────────────────────────
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(items_router, prefix="/api/items", tags=["items"])
