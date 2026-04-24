@@ -49,7 +49,7 @@ app = FastAPI(
 # ── CORS ──────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("CLIENT_URL", "http://localhost:5173")],
+    allow_origins=[os.getenv("CLIENT_URL", "https://v0-campusorbit-rental-platform-fv1rcclwn.vercel.app/")],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
