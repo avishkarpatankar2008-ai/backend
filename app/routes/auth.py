@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, Request, HTTPException, Depends, Response
 from datetime import datetime, timedelta
 import random, os, re
 from bson import ObjectId
@@ -8,13 +8,20 @@ import jwt
 from app.models import UserRegister, UserLogin, OTPVerify, UserOut, UserUpdate
 from app.deps import get_current_user, get_db
 
+# ── Router ────────────────────────────────────────────────────
 router = APIRouter()
 
+# ✅ Handle preflight (CORS fix)
+@router.options("/{rest_of_path:path}")
+async def options_handler():
+    return Response(status_code=200)
+
+# ── Config ────────────────────────────────────────────────────
 JWT_SECRET = os.getenv("JWT_SECRET", "changeme_secret_32chars_minimum!!")
 JWT_EXPIRE_DAYS = 30
 COLLEGE_EMAIL_RE = re.compile(r"\.(edu|ac\.in)$")
 
-
+# ── Helpers ───────────────────────────────────────────────────
 def make_token(user_id: str) -> str:
     payload = {
         "id": user_id,
@@ -22,18 +29,14 @@ def make_token(user_id: str) -> str:
     }
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
-
 def hash_password(pwd: str) -> str:
     return bcrypt.hashpw(pwd.encode(), bcrypt.gensalt()).decode()
-
 
 def verify_password(pwd: str, hashed: str) -> bool:
     return bcrypt.checkpw(pwd.encode(), hashed.encode())
 
-
 def send_otp_email(email: str, name: str, otp: str):
-    """Send OTP email — replace with nodemailer-equivalent (smtplib / sendgrid)."""
-    import smtplib, os
+    import smtplib
     from email.mime.text import MIMEText
 
     host = os.getenv("EMAIL_HOST", "smtp.gmail.com")
@@ -58,9 +61,7 @@ def send_otp_email(email: str, name: str, otp: str):
     except Exception as e:
         print(f"Email error: {e}")
 
-
-# ── Register ──────────────────────────────────────────────────────────────────
-
+# ── Register ──────────────────────────────────────────────────
 @router.post("/register", status_code=201)
 async def register(body: UserRegister, request: Request):
     db = get_db(request)
@@ -72,6 +73,7 @@ async def register(body: UserRegister, request: Request):
         raise HTTPException(400, "Email already registered")
 
     otp = str(random.randint(100000, 999999))
+
     user_doc = {
         "name": body.name,
         "email": body.email,
@@ -83,7 +85,10 @@ async def register(body: UserRegister, request: Request):
         "profile_photo": None,
         "role": "student",
         "is_verified": False,
-        "otp": {"code": otp, "expires_at": datetime.utcnow() + timedelta(minutes=10)},
+        "otp": {
+            "code": otp,
+            "expires_at": datetime.utcnow() + timedelta(minutes=10)
+        },
         "trust_score": 50,
         "total_ratings": 0,
         "avg_rating": 0.0,
@@ -91,42 +96,54 @@ async def register(body: UserRegister, request: Request):
         "location": {"type": "Point", "coordinates": [0, 0]},
         "created_at": datetime.utcnow(),
     }
+
     result = await db.users.insert_one(user_doc)
     send_otp_email(body.email, body.name, otp)
 
-    return {"success": True, "user_id": str(result.inserted_id), "message": "OTP sent to your college email"}
+    return {
+        "success": True,
+        "user_id": str(result.inserted_id),
+        "message": "OTP sent to your college email"
+    }
 
-
-# ── Verify OTP ────────────────────────────────────────────────────────────────
-
+# ── Verify OTP ────────────────────────────────────────────────
 @router.post("/verify-otp")
 async def verify_otp(body: OTPVerify, request: Request):
     db = get_db(request)
     user = await db.users.find_one({"_id": ObjectId(body.user_id)})
+
     if not user:
         raise HTTPException(404, "User not found")
 
     otp_data = user.get("otp", {})
+
     if otp_data.get("code") != body.otp:
         raise HTTPException(400, "Invalid OTP")
+
     if otp_data.get("expires_at", datetime.min) < datetime.utcnow():
         raise HTTPException(400, "OTP expired")
 
     await db.users.update_one(
         {"_id": user["_id"]},
-        {"$set": {"is_verified": True, "trust_score": 60}, "$unset": {"otp": ""}},
+        {
+            "$set": {"is_verified": True, "trust_score": 60},
+            "$unset": {"otp": ""}
+        },
     )
 
     token = make_token(str(user["_id"]))
+
     return {
         "success": True,
         "token": token,
-        "user": {"id": str(user["_id"]), "name": user["name"], "email": user["email"]},
+        "user": {
+            "id": str(user["_id"]),
+            "name": user["name"],
+            "email": user["email"]
+        },
     }
 
-
-# ── Login ─────────────────────────────────────────────────────────────────────
-
+# ── Login ─────────────────────────────────────────────────────
 @router.post("/login")
 async def login(body: UserLogin, request: Request):
     db = get_db(request)
@@ -134,22 +151,27 @@ async def login(body: UserLogin, request: Request):
 
     if not user or not verify_password(body.password, user["password"]):
         raise HTTPException(401, "Invalid credentials")
+
     if not user.get("is_verified"):
         raise HTTPException(401, "Please verify your email first")
 
     token = make_token(str(user["_id"]))
+
     return {
         "success": True,
         "token": token,
-        "user": {"id": str(user["_id"]), "name": user["name"], "email": user["email"]},
+        "user": {
+            "id": str(user["_id"]),
+            "name": user["name"],
+            "email": user["email"]
+        },
     }
 
-
-# ── Me ────────────────────────────────────────────────────────────────────────
-
+# ── Me ────────────────────────────────────────────────────────
 @router.get("/me")
 async def me(current_user: dict = Depends(get_current_user)):
     u = current_user
+
     return UserOut(
         id=str(u["_id"]),
         name=u["name"],
@@ -164,13 +186,17 @@ async def me(current_user: dict = Depends(get_current_user)):
         is_verified=u.get("is_verified", False),
     )
 
-
-# ── Update profile ────────────────────────────────────────────────────────────
-
+# ── Update profile ────────────────────────────────────────────
 @router.put("/me")
 async def update_me(body: UserUpdate, request: Request, current_user: dict = Depends(get_current_user)):
     db = get_db(request)
+
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
+
     if updates:
-        await db.users.update_one({"_id": current_user["_id"]}, {"$set": updates})
+        await db.users.update_one(
+            {"_id": current_user["_id"]},
+            {"$set": updates}
+        )
+
     return {"success": True}
