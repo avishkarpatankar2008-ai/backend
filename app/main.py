@@ -14,7 +14,10 @@ from app.routes.lost_found import router as lost_found_router
 # ── Load Env ──────────────────────────────────────────────────
 load_dotenv()
 
-MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017")
+MONGO_URL = os.getenv("MONGO_URL")
+print("MONGO_URL FROM ENV:", MONGO_URL)
+if not MONGO_URL:
+    raise ValueError("MONGO_URL is not set in environment variables")
 DB_NAME = os.getenv("DB_NAME", "campusorbit")
 
 # ── Lifespan (DB connection) ──────────────────────────────────
