@@ -11,14 +11,23 @@ from app.routes.items import router as items_router
 from app.routes.bookings import router as bookings_router
 from app.routes.chat import router as chat_router
 from app.routes.lost_found import router as lost_found_router
+
 # ── Load Env ──────────────────────────────────────────────────
 load_dotenv()
 
 MONGO_URL = os.getenv("MONGO_URL")
-print("MONGO_URL FROM ENV:", MONGO_URL)
 if not MONGO_URL:
     raise ValueError("MONGO_URL is not set in environment variables")
 DB_NAME = os.getenv("DB_NAME", "campusorbit")
+
+# FIXED: read allowed origins from env so Vercel URL works without code changes.
+# Falls back to * for local dev.
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
+ALLOWED_ORIGINS: list[str] = (
+    [o.strip() for o in _raw_origins.split(",") if o.strip()]
+    if _raw_origins != "*"
+    else ["*"]
+)
 
 # ── Lifespan (DB connection) ──────────────────────────────────
 @asynccontextmanager
@@ -26,13 +35,13 @@ async def lifespan(app: FastAPI):
     app.mongodb_client = AsyncIOMotorClient(MONGO_URL)
     app.db = app.mongodb_client[DB_NAME]
 
-    # Create indexes
+    # Indexes — safe to call multiple times (no-ops if already exist)
     await app.db.users.create_index("email", unique=True)
     await app.db.items.create_index([("location", "2dsphere")])
     await app.db.items.create_index([
         ("title", "text"),
         ("description", "text"),
-        ("tags", "text")
+        ("tags", "text"),
     ])
 
     yield
@@ -43,23 +52,28 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="CampusOrbit API",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # ── CORS ──────────────────────────────────────────────────────
+# We use token-based auth (Authorization header), NOT cookies.
+# Therefore allow_credentials MUST be False when allow_origins=["*"].
+# If you later restrict origins to specific domains, you can set
+# allow_credentials=True and list each domain explicitly.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # TEMP
-    allow_credentials=False,  # IMPORTANT
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 # ── Routes ────────────────────────────────────────────────────
-app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
-app.include_router(items_router, prefix="/api/items", tags=["items"])
-app.include_router(bookings_router, prefix="/api/bookings", tags=["bookings"])
-app.include_router(chat_router, prefix="/api/chat", tags=["chat"])              # ✅ ADDED
-app.include_router(lost_found_router, prefix="/api/lost-found", tags=["lost-found"])  # ✅ ADDED
+app.include_router(auth_router,      prefix="/api/auth",       tags=["auth"])
+app.include_router(items_router,     prefix="/api/items",      tags=["items"])
+app.include_router(bookings_router,  prefix="/api/bookings",   tags=["bookings"])
+app.include_router(chat_router,      prefix="/api/chat",       tags=["chat"])
+app.include_router(lost_found_router, prefix="/api/lost-found", tags=["lost-found"])
 
 # ── Health Check ──────────────────────────────────────────────
 @app.get("/api/health")
