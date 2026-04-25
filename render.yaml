@@ -1,10 +1,29 @@
 services:
   - type: web
-    name: backend
+    name: campusorbit-backend
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    # FIXED: was "uvicorn main:app" — wrong path; app lives in app/main.py
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port 10000
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+      - key: MONGO_URL
+        sync: false          # set in Render dashboard
+      - key: JWT_SECRET
+        sync: false          # set in Render dashboard
+      - key: EMAIL_HOST
+        value: smtp.gmail.com
+      - key: EMAIL_PORT
+        value: "587"
+      - key: EMAIL_USER
+        sync: false          # your gmail address
+      - key: EMAIL_PASS
+        sync: false          # gmail app password
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
