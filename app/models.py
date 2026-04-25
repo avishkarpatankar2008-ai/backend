@@ -22,6 +22,10 @@ class UserRegister(BaseModel):
     name: str
     email: EmailStr
     password: str
+    # Frontend sends "college" and "phone" — accept both naming conventions
+    college: Optional[str] = None
+    phone: Optional[str] = None
+    # Legacy / native-app fields (optional, ignored if not sent)
     branch: Optional[str] = None
     year: Optional[int] = None
     stay_type: StayType = StayType.hostel
@@ -34,7 +38,9 @@ class UserLogin(BaseModel):
 
 
 class OTPVerify(BaseModel):
-    user_id: str
+    # Frontend may send user_id OR email — both are accepted
+    user_id: Optional[str] = None
+    email: Optional[EmailStr] = None
     otp: str
 
 
@@ -42,21 +48,28 @@ class UserOut(BaseModel):
     id: str
     name: str
     email: str
-    branch: Optional[str]
-    year: Optional[int]
-    stay_type: str
-    hostel_block: Optional[str]
-    profile_photo: Optional[str]
-    trust_score: float
-    avg_rating: float
-    is_verified: bool
+    # Frontend-facing fields
+    college: Optional[str] = None
+    phone: Optional[str] = None
+    avatar: Optional[str] = None
+    # Extended fields
+    branch: Optional[str] = None
+    year: Optional[int] = None
+    stay_type: str = "hostel"
+    hostel_block: Optional[str] = None
+    profile_photo: Optional[str] = None
+    trust_score: float = 50.0
+    avg_rating: float = 0.0
+    is_verified: bool = False
 
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     phone: Optional[str] = None
+    college: Optional[str] = None
     hostel_block: Optional[str] = None
     profile_photo: Optional[str] = None
+    avatar: Optional[str] = None
     upi_id: Optional[str] = None
 
 
