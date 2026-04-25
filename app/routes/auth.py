@@ -152,9 +152,32 @@ async def login(body: UserLogin, request: Request):
     if not user or not verify_password(body.password, user["password"]):
         raise HTTPException(401, "Invalid credentials")
 
+    # 🔥 CASE 1: USER NOT VERIFIED → SEND OTP
     if not user.get("is_verified"):
-        raise HTTPException(401, "Please verify your email first")
+        otp = str(random.randint(100000, 999999))
 
+        await db.users.update_one(
+            {"_id": user["_id"]},
+            {
+                "$set": {
+                    "otp": {
+                        "code": otp,
+                        "expires_at": datetime.utcnow() + timedelta(minutes=10)
+                    }
+                }
+            },
+        )
+
+        send_otp_email(user["email"], user["name"], otp)
+
+        return {
+            "success": True,
+            "requires_otp": True,
+            "user_id": str(user["_id"]),
+            "message": "OTP sent again"
+        }
+
+    # 🔥 CASE 2: USER VERIFIED → NORMAL LOGIN
     token = make_token(str(user["_id"]))
 
     return {
