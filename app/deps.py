@@ -18,10 +18,20 @@ async def get_current_user(
     try:
         payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
         user_id = payload.get("id")
+        if not user_id:
+            raise HTTPException(401, "Malformed token: missing user id")
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Token has expired. Please log in again.")
     except jwt.PyJWTError:
-        raise HTTPException(401, "Invalid or expired token")
+        raise HTTPException(401, "Invalid token. Please log in again.")
 
-    user = await request.app.db.users.find_one({"_id": ObjectId(user_id)})
+    try:
+        oid = ObjectId(user_id)
+    except Exception:
+        raise HTTPException(401, "Malformed token: invalid user id")
+
+    user = await request.app.db.users.find_one({"_id": oid})
     if not user:
-        raise HTTPException(401, "User not found")
+        raise HTTPException(401, "User no longer exists")
+
     return user
