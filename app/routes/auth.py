@@ -84,8 +84,8 @@ async def _send_otp_email(email: str, name: str, otp: str):
             f"If you did not request this, please ignore this email."
         )
         msg["Subject"] = "CampusOrbit — Verify your email"
-        msg["From"] = user
-        msg["To"] = email
+        msg["From"]    = user
+        msg["To"]      = email
         try:
             with smtplib.SMTP(host, port) as s:
                 s.starttls()
@@ -113,40 +113,39 @@ async def register(body: UserRegister, request: Request):
     otp, expires_at = _make_otp()
 
     user_doc = {
-        "name": body.name,
-        "email": body.email,
-        "password": hash_password(body.password),
-        # Store under both names so queries work regardless of which the client sent
-        "college": body.college or body.branch,
-        "branch": body.branch or body.college,
-        "phone": body.phone,
-        "year": body.year,
-        "stay_type": body.stay_type,
+        "name":         body.name,
+        "email":        body.email,
+        "password":     hash_password(body.password),
+        "college":      body.college or body.branch,
+        "branch":       body.branch or body.college,
+        "phone":        body.phone,
+        "year":         body.year,
+        "stay_type":    body.stay_type,
         "hostel_block": body.hostel_block,
         "profile_photo": None,
-        "avatar": None,
-        "role": "student",
-        "is_verified": False,
+        "avatar":       None,
+        "role":         "student",
+        "is_verified":  False,
         "otp": {
-            "code": otp,
+            "code":       otp,
             "expires_at": expires_at,
         },
-        "trust_score": 50,
-        "total_ratings": 0,
-        "avg_rating": 0.0,
-        "upi_id": None,
-        "location": {"type": "Point", "coordinates": [0, 0]},
-        "created_at": datetime.utcnow(),
+        "trust_score":    50,
+        "total_ratings":  0,
+        "avg_rating":     0.0,
+        "upi_id":         None,
+        "location":       {"type": "Point", "coordinates": [0, 0]},
+        "created_at":     datetime.utcnow(),
     }
 
     result = await db.users.insert_one(user_doc)
     await _send_otp_email(body.email, body.name, otp)
 
     return {
-        "success": True,
-        "user_id": str(result.inserted_id),
+        "success":     True,
+        "user_id":     str(result.inserted_id),
         "requires_otp": True,
-        "message": "OTP sent to your college email",
+        "message":     "OTP sent to your college email",
     }
 
 
@@ -186,21 +185,72 @@ async def verify_otp(body: OTPVerify, request: Request):
     await db.users.update_one(
         {"_id": user["_id"]},
         {
-            "$set": {"is_verified": True, "trust_score": 60},
+            "$set":   {"is_verified": True, "trust_score": 60},
             "$unset": {"otp": ""},
         },
     )
 
-    token = make_token(str(user["_id"]))
+    token    = make_token(str(user["_id"]))
     user_out = _build_user_out(user)
+    # Patch is_verified to True in the returned object (the DB update happened above
+    # but `user` still holds the old snapshot)
+    user_out["is_verified"] = True
 
     return {
-        "success": True,
-        # Both names returned so either version of the frontend works
-        "token": token,
-        "access_token": token,
-        "user": user_out,
+        "success":      True,
+        "token":        token,
+        "access_token": token,   # both names so either frontend version works
+        "user":         user_out,
     }
+
+
+# ── Resend OTP ────────────────────────────────────────────────
+# ADDED: previously missing endpoint — the frontend's "Resend OTP" button calls this.
+
+@router.post("/resend-otp")
+async def resend_otp(request: Request):
+    """
+    Accepts JSON body: { "user_id": "..." } OR { "email": "..." }
+    Generates a fresh OTP and (re-)sends the email.
+    """
+    import json
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Invalid JSON body")
+
+    db = get_db(request)
+
+    user_id = body.get("user_id")
+    email   = body.get("email")
+
+    if user_id:
+        try:
+            oid = ObjectId(user_id)
+        except Exception:
+            raise HTTPException(400, "Invalid user_id format")
+        user = await db.users.find_one({"_id": oid})
+    elif email:
+        user = await db.users.find_one({"email": email})
+    else:
+        raise HTTPException(400, "Provide either user_id or email")
+
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    if user.get("is_verified"):
+        raise HTTPException(400, "User is already verified")
+
+    otp, expires_at = _make_otp()
+
+    await db.users.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"otp": {"code": otp, "expires_at": expires_at}}},
+    )
+
+    await _send_otp_email(user["email"], user["name"], otp)
+
+    return {"success": True, "message": "A new OTP has been sent to your email"}
 
 
 # ── Login ─────────────────────────────────────────────────────
@@ -225,22 +275,21 @@ async def login(body: UserLogin, request: Request):
         await _send_otp_email(user["email"], user["name"], otp)
 
         return {
-            "success": True,
+            "success":     True,
             "requires_otp": True,
-            "user_id": str(user["_id"]),
-            "message": "Please verify your email. OTP sent.",
+            "user_id":     str(user["_id"]),
+            "message":     "Please verify your email. OTP sent.",
         }
 
     # Case 2: user IS verified → return token + user
-    token = make_token(str(user["_id"]))
+    token    = make_token(str(user["_id"]))
     user_out = _build_user_out(user)
 
     return {
-        "success": True,
-        # Both names so frontend works regardless of which it checks first
-        "token": token,
+        "success":      True,
+        "token":        token,
         "access_token": token,
-        "user": user_out,
+        "user":         user_out,
     }
 
 
@@ -249,7 +298,6 @@ async def login(body: UserLogin, request: Request):
 @router.get("/me")
 async def me(current_user: dict = Depends(get_current_user)):
     user_out = _build_user_out(current_user)
-    # Frontend reads result.data?.user — wrap it
     return {"user": user_out}
 
 
