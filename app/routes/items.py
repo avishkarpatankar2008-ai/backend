@@ -2,6 +2,7 @@ from fastapi import APIRouter, Request, HTTPException, Depends, Query, UploadFil
 from typing import Optional, List
 from datetime import datetime, timedelta
 from bson import ObjectId
+import asyncio
 import cloudinary, cloudinary.uploader, os
 
 from app.models import ItemCreate, ItemUpdate, ItemOut
@@ -59,12 +60,13 @@ async def my_listings(request: Request, current_user: dict = Depends(get_current
 async def get_items(
     request: Request,
     category: Optional[str] = None,
+    condition: Optional[str] = None,
     max_price: Optional[float] = None,
     search: Optional[str] = None,
     hostel_block: Optional[str] = None,
     instant_booking: Optional[bool] = None,
     barter_ok: Optional[bool] = None,
-    last_minute: Optional[bool] = None,      # available within 2 days
+    last_minute: Optional[bool] = None,
     lat: Optional[float] = None,
     lng: Optional[float] = None,
     sort: str = "newest",
@@ -76,6 +78,8 @@ async def get_items(
 
     if category:
         query["category"] = category
+    if condition:
+        query["condition"] = condition
     if max_price:
         query["price_per_day"] = {"$lte": max_price}
     if search:
@@ -98,15 +102,25 @@ async def get_items(
     }
     sort_by = sort_map.get(sort, [("created_at", -1)])
 
-    if lat and lng:
-        cursor = db.items.find(
-            {**query, "location": {"$near": {"$geometry": {"type": "Point", "coordinates": [lng, lat]}, "$maxDistance": 2000}}}
-        )
+    # FIX: $near cannot be combined with .sort(); use it only when no sort needed.
+    # When geo search is requested we skip the sort (proximity IS the sort).
+    if lat is not None and lng is not None:
+        geo_query = {
+            **query,
+            "location": {
+                "$near": {
+                    "$geometry": {"type": "Point", "coordinates": [lng, lat]},
+                    "$maxDistance": 2000,
+                }
+            },
+        }
+        total = await db.items.count_documents(query)  # count without geo for perf
+        cursor = db.items.find(geo_query).skip((page - 1) * limit).limit(limit)
     else:
-        cursor = db.items.find(query).sort(sort_by)
+        total = await db.items.count_documents(query)
+        cursor = db.items.find(query).sort(sort_by).skip((page - 1) * limit).limit(limit)
 
-    total = await db.items.count_documents(query)
-    items = await cursor.skip((page - 1) * limit).limit(limit).to_list(limit)
+    items = await cursor.to_list(limit)
 
     result = []
     for item in items:
@@ -189,10 +203,15 @@ async def upload_images(
     if not item or item["owner_id"] != current_user["_id"]:
         raise HTTPException(403, "Not your item")
 
+    loop = asyncio.get_running_loop()
     urls = []
     for f in files:
         data = await f.read()
-        res = cloudinary.uploader.upload(data, folder="campusorbit/items")
+        # FIX: Cloudinary upload is blocking — run in executor to avoid blocking the event loop
+        res = await loop.run_in_executor(
+            None,
+            lambda d=data: cloudinary.uploader.upload(d, folder="campusorbit/items"),
+        )
         urls.append(res["secure_url"])
 
     await db.items.update_one({"_id": item["_id"]}, {"$push": {"images": {"$each": urls}}})
