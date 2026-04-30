@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request, HTTPException, Depends
 from datetime import datetime
 from bson import ObjectId
+from typing import List
 
 from app.models import BookingCreate, RatingIn
 from app.deps import get_current_user, get_db
@@ -28,7 +29,35 @@ def fmt_booking(b: dict, item: dict, renter: dict, owner: dict) -> dict:
     }
 
 
+async def _resolve_batch(db, bookings: list) -> list:
+    """Resolve a list of bookings with batched DB lookups instead of N+1 queries."""
+    if not bookings:
+        return []
+
+    # Collect unique IDs
+    item_ids = list({b["item_id"] for b in bookings})
+    renter_ids = list({b["renter_id"] for b in bookings})
+    owner_ids = list({b["owner_id"] for b in bookings})
+    all_user_ids = list({*renter_ids, *owner_ids})
+
+    # Batch fetch
+    items_list = await db.items.find({"_id": {"$in": item_ids}}).to_list(len(item_ids))
+    users_list = await db.users.find({"_id": {"$in": all_user_ids}}).to_list(len(all_user_ids))
+
+    items_map = {i["_id"]: i for i in items_list}
+    users_map = {u["_id"]: u for u in users_list}
+
+    result = []
+    for b in bookings:
+        item = items_map.get(b["item_id"], {})
+        renter = users_map.get(b["renter_id"], {})
+        owner = users_map.get(b["owner_id"], {})
+        result.append(fmt_booking(b, item, renter, owner))
+    return result
+
+
 async def _resolve(db, booking: dict):
+    """Single booking resolve (kept for single-booking endpoints)."""
     item   = await db.items.find_one({"_id": booking["item_id"]}) or {}
     renter = await db.users.find_one({"_id": booking["renter_id"]}) or {}
     owner  = await db.users.find_one({"_id": booking["owner_id"]}) or {}
@@ -43,7 +72,7 @@ async def _resolve(db, booking: dict):
 async def lent_bookings(request: Request, current_user: dict = Depends(get_current_user)):
     db = get_db(request)
     bookings = await db.bookings.find({"owner_id": current_user["_id"]}).sort("created_at", -1).to_list(100)
-    return {"success": True, "bookings": [await _resolve(db, b) for b in bookings]}
+    return {"success": True, "bookings": await _resolve_batch(db, bookings)}
 
 
 # ── My bookings (as renter) ───────────────────────────────────────────────────
@@ -52,7 +81,7 @@ async def lent_bookings(request: Request, current_user: dict = Depends(get_curre
 async def my_bookings(request: Request, current_user: dict = Depends(get_current_user)):
     db = get_db(request)
     bookings = await db.bookings.find({"renter_id": current_user["_id"]}).sort("created_at", -1).to_list(100)
-    return {"success": True, "bookings": [await _resolve(db, b) for b in bookings]}
+    return {"success": True, "bookings": await _resolve_batch(db, bookings)}
 
 
 # ── Create booking ────────────────────────────────────────────────────────────
