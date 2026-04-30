@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Request, HTTPException, Depends, UploadFile, File, Form
+from fastapi import APIRouter, Request, HTTPException, Depends, UploadFile, File
 from typing import Optional
 from datetime import datetime
 from bson import ObjectId
+import asyncio
 import cloudinary, cloudinary.uploader, os
 
 from app.models import LostFoundCreate
@@ -33,6 +34,26 @@ def fmt_report(r: dict, reporter: dict) -> dict:
         "contact_email": r.get("contact_email"),
         "created_at": r["created_at"].isoformat(),
     }
+
+
+# ── IMPORTANT: /my MUST come before /{report_id} ──────────────────────────────
+# If /{report_id} is registered first, FastAPI matches "/my" as a report_id
+# and returns a 400/404 instead of the user's reports list.
+
+@router.get("/my")
+async def my_reports(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    db = get_db(request)
+    reports = await db.lost_found.find(
+        {"reported_by_id": current_user["_id"]}
+    ).sort("created_at", -1).to_list(100)
+
+    result = []
+    for r in reports:
+        result.append(fmt_report(r, current_user))
+    return {"success": True, "reports": result}
 
 
 @router.post("", status_code=201)
@@ -80,11 +101,16 @@ async def upload_report_image(
 
     contents = await file.read()
 
+    # Run blocking Cloudinary upload in a thread so we don't block the event loop
+    loop = asyncio.get_running_loop()
     try:
-        result = cloudinary.uploader.upload(
-            contents,
-            folder="campusorbit/lost_found",
-            resource_type="image",
+        result = await loop.run_in_executor(
+            None,
+            lambda: cloudinary.uploader.upload(
+                contents,
+                folder="campusorbit/lost_found",
+                resource_type="image",
+            ),
         )
         image_url = result["secure_url"]
     except Exception as e:
@@ -129,22 +155,6 @@ async def get_reports(
     for r in reports:
         reporter = await db.users.find_one({"_id": r["reported_by_id"]}) or {}
         result.append(fmt_report(r, reporter))
-    return {"success": True, "reports": result}
-
-
-@router.get("/my")
-async def my_reports(
-    request: Request,
-    current_user: dict = Depends(get_current_user),
-):
-    db = get_db(request)
-    reports = await db.lost_found.find(
-        {"reported_by_id": current_user["_id"]}
-    ).sort("created_at", -1).to_list(100)
-
-    result = []
-    for r in reports:
-        result.append(fmt_report(r, current_user))
     return {"success": True, "reports": result}
 
 
