@@ -1,0 +1,50 @@
+services:
+  - type: web
+    name: campusorbit-backend
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: >
+      gunicorn app.main:app
+      --workers 2
+      --worker-class uvicorn.workers.UvicornWorker
+      --preload
+      --bind 0.0.0.0:${PORT:-10000}
+      --timeout 120
+      --keep-alive 5
+      --access-logfile -
+      --error-logfile -
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: ENV
+        value: production
+      - key: MONGO_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: "https://campusorbit-steel.vercel.app"
+      - key: DB_NAME
+        value: campusorbit
+      # ── Gmail SMTP via App Password ────────────────────────────────────
+      # Step 1: Google Account → Security → 2-Step Verification → Turn ON
+      # Step 2: Same page → App Passwords → Mail + Other (CampusOrbit) → Generate
+      # Step 3: Copy the 16-char code, paste into EMAIL_PASS WITHOUT spaces or quotes
+      - key: EMAIL_HOST
+        value: smtp.gmail.com
+      - key: EMAIL_PORT
+        value: "587"
+      - key: EMAIL_USER
+        sync: false          # your Gmail address e.g. yourname@gmail.com
+      - key: EMAIL_PASS
+        sync: false          # 16-char App Password e.g. abcdabcdabcdabcd
+      # ── Cloudinary ────────────────────────────────────────────────────
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: BCRYPT_ROUNDS
+        value: "10"
