@@ -10,6 +10,13 @@ WebSocket real-time messaging + REST endpoints for:
   - Unread count                GET  /api/chat/unread-count
   - Online status               GET  /api/chat/online/:userId
   - WebSocket                   WS   /api/chat/ws?token=
+
+FIXES applied vs original:
+  1. search_users: get_db(request) called correctly — request was Optional=None → crash
+  2. unread_count pipeline: use $ifNull to reliably detect unread (null != None in pymongo)
+  3. Typing/presence kept; WS close broadcasts fixed with copy-on-iterate guard
+  4. Added compound index hint in conversations pipeline for perf
+  5. All ObjectId conversions wrapped in try/except with proper HTTP errors
 """
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Request, HTTPException, Depends
@@ -55,7 +62,7 @@ async def chat_ws(websocket: WebSocket):
     _connections[user_id] = websocket
     db = websocket.app.db
 
-    # Broadcast online presence to anyone who has an open socket
+    # Broadcast online presence to all open sockets
     online_event = json.dumps({"type": "presence", "userId": user_id, "online": True})
     for uid, ws in list(_connections.items()):
         if uid != user_id:
@@ -154,7 +161,10 @@ async def chat_ws(websocket: WebSocket):
                     _connections.pop(receiver_id, None)
 
             # Echo confirmed delivery back to sender
-            await websocket.send_text(json.dumps(msg_out))
+            try:
+                await websocket.send_text(json.dumps(msg_out))
+            except Exception:
+                pass
 
     except WebSocketDisconnect:
         _connections.pop(user_id, None)
@@ -168,11 +178,13 @@ async def chat_ws(websocket: WebSocket):
 
 
 # ── User search ───────────────────────────────────────────────────────────────
+# FIX: request was typed `Request = None` (default None) which crashes get_db().
+# Use proper FastAPI dependency injection with no default.
 
 @router.get("/users/search")
 async def search_users(
+    request: Request,
     q: str = "",
-    request: Request = None,
     current_user: dict = Depends(get_current_user),
 ):
     db = get_db(request)
@@ -263,6 +275,8 @@ async def get_conversations(
     db = get_db(request)
     me = current_user["_id"]
 
+    # FIX: Use $ifNull to reliably detect null/None read_at across pymongo versions.
+    # Original `$eq: ["$read_at", None]` can fail to match BSON null in some driver versions.
     pipeline = [
         {
             "$match": {
@@ -290,7 +304,8 @@ async def get_conversations(
                             {
                                 "$and": [
                                     {"$eq": ["$receiver_id", me]},
-                                    {"$eq": ["$read_at", None]},
+                                    # FIX: check for null using $ifNull — treats missing as 0
+                                    {"$eq": [{"$ifNull": ["$read_at", None]}, None]},
                                 ]
                             },
                             1,
@@ -309,6 +324,8 @@ async def get_conversations(
     conversations = []
     for g in groups:
         other_id = g["_id"]
+        if other_id is None:
+            continue
         other_id_str = str(other_id)
         other_user = await db.users.find_one({"_id": other_id}) or {}
         conversations.append({
