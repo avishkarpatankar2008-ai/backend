@@ -10,3 +10,5 @@ bcrypt==4.1.3
 PyJWT==2.8.0
 cloudinary==1.40.0
 python-multipart==0.0.9
+# FIX: pin httptools to avoid Render build failures on Python 3.11 with uvicorn[standard]
+httptools==0.6.1
