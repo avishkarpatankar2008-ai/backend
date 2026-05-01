@@ -33,21 +33,42 @@ async def lifespan(app: FastAPI):
     app.mongodb_client = AsyncIOMotorClient(MONGO_URL)
     app.db = app.mongodb_client[DB_NAME]
 
-    # Existing indexes
+    # ── Core indexes ──────────────────────────────────────────────────────────
     await app.db.users.create_index("email", unique=True)
-    await app.db.items.create_index([("location", "2dsphere")])
+    await app.db.items.create_index([("location", "2dsphere")], sparse=True)
     await app.db.items.create_index([
         ("title", "text"),
         ("description", "text"),
         ("tags", "text"),
     ])
 
-    # Chat performance indexes
-    await app.db.messages.create_index([("sender_id", 1), ("receiver_id", 1), ("created_at", -1)])
-    await app.db.messages.create_index([("receiver_id", 1), ("read_at", 1)])
+    # ── Chat performance indexes ──────────────────────────────────────────────
+    # Compound index for message history queries (sender<->receiver pairs)
+    await app.db.messages.create_index(
+        [("sender_id", 1), ("receiver_id", 1), ("created_at", -1)],
+        name="msg_thread_idx",
+    )
+    # Index for unread count and mark-seen queries
+    await app.db.messages.create_index(
+        [("receiver_id", 1), ("read_at", 1)],
+        name="msg_unread_idx",
+    )
+    # Index for conversation list aggregation (both directions)
+    await app.db.messages.create_index(
+        [("receiver_id", 1), ("sender_id", 1), ("created_at", -1)],
+        name="msg_conv_idx",
+    )
 
-    # User search index
-    await app.db.users.create_index([("name", "text"), ("email", "text"), ("college", "text")])
+    # ── User search text index ────────────────────────────────────────────────
+    # NOTE: MongoDB only allows one text index per collection.
+    # If this fails (already exists with different fields), it's safe to ignore.
+    try:
+        await app.db.users.create_index(
+            [("name", "text"), ("email", "text"), ("college", "text")],
+            name="user_search_text",
+        )
+    except Exception:
+        pass  # Index already exists
 
     yield
     app.mongodb_client.close()
