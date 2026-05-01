@@ -30,7 +30,7 @@ services:
 
       # ── Auth ────────────────────────────────────────────────────────────────
       - key: JWT_SECRET
-        sync: false          # python -c "import secrets; print(secrets.token_hex(32))"
+        sync: 41452934652540260606675340398489          # python -c "import secrets; print(secrets.token_hex(32))"
 
       # ── CORS ────────────────────────────────────────────────────────────────
       # FIX: Set this to your actual Vercel URL (no trailing slash).
