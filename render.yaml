@@ -57,8 +57,11 @@ services:
 
       # ── Cloudinary (image uploads) ───────────────────────────────────────────
       - key: CLOUDINARY_CLOUD_NAME
-        sync: false
+        sync: 	
+CampusOrbit
+
+
       - key: CLOUDINARY_API_KEY
-        sync: false
+        sync: 721313497423698
       - key: CLOUDINARY_API_SECRET
-        sync: false
+        sync: WGmMrtPqSa4Rmw5tY6nmKK14EIE
