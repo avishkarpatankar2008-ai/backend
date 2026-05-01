@@ -4,6 +4,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from contextlib import asynccontextmanager
 import os
 from dotenv import load_dotenv
+from pymongo.errors import OperationFailure
 
 from app.routes.auth import router as auth_router
 from app.routes.items import router as items_router
@@ -24,7 +25,9 @@ if not _raw_origins or _raw_origins.strip() == "*":
     ALLOWED_ORIGINS = ["*"]
     ALLOW_CREDENTIALS = False
 else:
-    ALLOWED_ORIGINS = [o.strip().rstrip("/") for o in _raw_origins.split(",") if o.strip()]
+    ALLOWED_ORIGINS = [
+        o.strip().rstrip("/") for o in _raw_origins.split(",") if o.strip()
+    ]
     ALLOW_CREDENTIALS = True
 
 
@@ -33,42 +36,68 @@ async def lifespan(app: FastAPI):
     app.mongodb_client = AsyncIOMotorClient(MONGO_URL)
     app.db = app.mongodb_client[DB_NAME]
 
-    # ── Core indexes ──────────────────────────────────────────────────────────
+    # ── Core indexes ─────────────────────────────────────
     await app.db.users.create_index("email", unique=True)
-    await app.db.items.create_index([("location", "2dsphere")], sparse=True)
-    await app.db.items.create_index([
-        ("title", "text"),
-        ("description", "text"),
-        ("tags", "text"),
-    ])
 
-    # ── Chat performance indexes ──────────────────────────────────────────────
-    # Compound index for message history queries (sender<->receiver pairs)
-    await app.db.messages.create_index(
-        [("sender_id", 1), ("receiver_id", 1), ("created_at", -1)],
-        name="msg_thread_idx",
-    )
-    # Index for unread count and mark-seen queries
-    await app.db.messages.create_index(
-        [("receiver_id", 1), ("read_at", 1)],
-        name="msg_unread_idx",
-    )
-    # Index for conversation list aggregation (both directions)
-    await app.db.messages.create_index(
-        [("receiver_id", 1), ("sender_id", 1), ("created_at", -1)],
-        name="msg_conv_idx",
-    )
+    # Safe geo index
+    try:
+        await app.db.items.create_index(
+            [("location", "2dsphere")],
+            name="location_2dsphere"
+        )
+    except OperationFailure:
+        pass
 
-    # ── User search text index ────────────────────────────────────────────────
-    # NOTE: MongoDB only allows one text index per collection.
-    # If this fails (already exists with different fields), it's safe to ignore.
+    # Safe text search index
+    try:
+        await app.db.items.create_index(
+            [
+                ("title", "text"),
+                ("description", "text"),
+                ("tags", "text"),
+            ],
+            name="items_text_search"
+        )
+    except OperationFailure:
+        pass
+
+    # ── Chat indexes ─────────────────────────────────────
+    try:
+        await app.db.messages.create_index(
+            [("sender_id", 1), ("receiver_id", 1), ("created_at", -1)],
+            name="msg_thread_idx",
+        )
+    except OperationFailure:
+        pass
+
+    try:
+        await app.db.messages.create_index(
+            [("receiver_id", 1), ("read_at", 1)],
+            name="msg_unread_idx",
+        )
+    except OperationFailure:
+        pass
+
+    try:
+        await app.db.messages.create_index(
+            [("receiver_id", 1), ("sender_id", 1), ("created_at", -1)],
+            name="msg_conv_idx",
+        )
+    except OperationFailure:
+        pass
+
+    # ── User search index ────────────────────────────────
     try:
         await app.db.users.create_index(
-            [("name", "text"), ("email", "text"), ("college", "text")],
+            [
+                ("name", "text"),
+                ("email", "text"),
+                ("college", "text"),
+            ],
             name="user_search_text",
         )
-    except Exception:
-        pass  # Index already exists
+    except OperationFailure:
+        pass
 
     yield
     app.mongodb_client.close()
@@ -89,11 +118,16 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-app.include_router(auth_router,       prefix="/api/auth",       tags=["auth"])
-app.include_router(items_router,      prefix="/api/items",      tags=["items"])
-app.include_router(bookings_router,   prefix="/api/bookings",   tags=["bookings"])
-app.include_router(chat_router,       prefix="/api/chat",       tags=["chat"])
+app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
+app.include_router(items_router, prefix="/api/items", tags=["items"])
+app.include_router(bookings_router, prefix="/api/bookings", tags=["bookings"])
+app.include_router(chat_router, prefix="/api/chat", tags=["chat"])
 app.include_router(lost_found_router, prefix="/api/lost-found", tags=["lost-found"])
+
+
+@app.get("/")
+async def root():
+    return {"message": "CampusOrbit API running"}
 
 
 @app.get("/api/health")
